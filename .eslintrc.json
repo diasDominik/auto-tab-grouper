@@ -1,0 +1,19 @@
+{
+  "env": {
+    "browser": true,
+    "es2021": true,
+    "webextensions": true // Recognizes Chrome extension APIs (chrome.*)
+  },
+  "extends": [
+    "eslint:recommended",
+    "prettier" // Disables style rules that conflict with Prettier
+  ],
+  "parserOptions": {
+    "ecmaVersion": "latest",
+    "sourceType": "module"
+  },
+  "rules": {
+    // Add any specific rules you want to enforce here.
+    // Example: "no-unused-vars": "warn" // Warns about unused variables instead of erroring
+  }
+}

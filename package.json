@@ -1,0 +1,21 @@
+{
+  "name": "auto-tab-grouper",
+  "version": "1.0.0",
+  "description": "Auto Tab Grouper is a browser extension that automatically organizes your open tabs into groups based on customizable rules. This helps keep your browsing experience tidy and efficient.",
+  "main": "background.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write ."
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "eslint": "^9.35.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.6.2"
+  }
+}
