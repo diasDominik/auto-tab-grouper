@@ -1,0 +1,28 @@
+### Privacy Policy for Auto Tab Grouper
+
+**Last Updated:** September 6, 2025
+
+Thank you for using Auto Tab Grouper ("the extension"). Your privacy is important to us. This policy explains what information the extension handles and why.
+
+#### 1. No Data Collection
+
+Auto Tab Grouper operates entirely locally on your computer. We do **not** collect, store, transmit, or share any personally identifiable information (PII), browsing history, or user activity.
+
+#### 2. Information Usage and Local Processing
+
+The extension's purpose is to organize your browser tabs. To achieve this, the extension performs the following actions exclusively within your browser:
+
+* **Rule Matching:** The extension reads the URL of your currently open tabs solely for the purpose of matching them against the grouping rules you have configured. This processing happens locally and in real-time. Tab URLs are not logged or stored.
+* **Configuration Storage:** The rules you create (including domain patterns, regular expressions, group titles, and color preferences) are saved using Chrome's built-in `storage` API. This data is stored locally on your device and may be synchronized across your devices if you have enabled Chrome Sync in your browser settings. The developer has no access to this data.
+
+#### 3. Data Sharing and Third Parties
+
+We do not sell, trade, or otherwise transfer any user data to outside parties. All functionality is self-contained within the extension. The extension does not load any remote code or connect to any third-party servers.
+
+#### 4. Changes to This Privacy Policy
+
+We may update this Privacy Policy in the future. We will notify you of any changes by posting the new Privacy Policy on the extension's Chrome Web Store page. You are advised to review this Privacy Policy periodically for any changes.
+
+#### 5. Contact Us
+
+If you have any questions about this Privacy Policy, please contact us on github.
