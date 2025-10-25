@@ -175,59 +175,73 @@ async function handleTab({ tabId, url, windowId }, retryCount = 0) {
 // --- New Function to Merge Duplicate Groups ---
 async function mergeDuplicateGroups() {
   logger.log("[mergeGroups] Starting group merge operation...");
-  const allGroups = await chrome.tabGroups.query({});
-  const currentWindow = await chrome.windows.getCurrent({});
+  try {
+    const allGroups = await chrome.tabGroups.query({});
+    const currentWindow = await chrome.windows.getCurrent({});
 
-  // 1. Organize all existing groups by their title
-  const groupsByTitle = new Map();
-  for (const group of allGroups) {
-    if (!group.title) continue; // Skip unnamed groups
-    if (!groupsByTitle.has(group.title)) {
-      groupsByTitle.set(group.title, []);
+    // 1. Organize all existing groups by their title
+    const groupsByTitle = new Map();
+    for (const group of allGroups) {
+      if (!group.title) continue; // Skip unnamed groups
+      if (!groupsByTitle.has(group.title)) {
+        groupsByTitle.set(group.title, []);
+      }
+      groupsByTitle.get(group.title).push(group);
     }
-    groupsByTitle.get(group.title).push(group);
-  }
 
-  // 2. Iterate through the organized groups and find duplicates
-  for (const [title, groups] of groupsByTitle.entries()) {
-    if (groups.length <= 1) continue; // Not a duplicate
+    // 2. Iterate through the organized groups and find duplicates
+    for (const [title, groups] of groupsByTitle.entries()) {
+      if (groups.length <= 1) continue; // Not a duplicate
 
-    logger.log(
-      `[mergeGroups] Found ${groups.length} groups with title "${title}".`
-    );
+      logger.log(
+        `[mergeGroups] Found ${groups.length} groups with title "${title}".`
+      );
 
-    // 3. Designate a target group (prioritize the one in the current window)
-    let targetGroup = groups.find((g) => g.windowId === currentWindow.id);
-    if (!targetGroup) {
-      targetGroup = groups[0]; // Default to the first one found
+      // 3. Designate a target group (prioritize the one in the current window)
+      let targetGroup = groups.find((g) => g.windowId === currentWindow.id);
+      if (!targetGroup) {
+        targetGroup = groups[0]; // Default to the first one found
+      }
+      logger.log(
+        `[mergeGroups] Target group is ${targetGroup.id} in window ${targetGroup.windowId}.`
+      );
+
+      const sourceGroups = groups.filter((g) => g.id !== targetGroup.id);
+
+      // 4. Get all tabs from all source groups
+      const tabQueries = sourceGroups.map((g) =>
+        chrome.tabs.query({ groupId: g.id })
+      );
+      const nestedTabs = await Promise.all(tabQueries);
+      const tabsToMove = nestedTabs.flat();
+      const tabIdsToMove = tabsToMove.map((t) => t.id);
+
+      if (tabIdsToMove.length === 0) continue;
+
+      // 5. Move tabs to the target window and add them to the target group
+      logger.log(
+        `[mergeGroups] Moving ${tabIdsToMove.length} tabs to group ${targetGroup.id}.`
+      );
+      try {
+        await chrome.tabs.move(tabIdsToMove, {
+          windowId: targetGroup.windowId,
+          index: -1,
+        });
+        await chrome.tabs.group({
+          groupId: targetGroup.id,
+          tabIds: tabIdsToMove,
+        });
+      } catch (err) {
+        logger.error(
+          `[mergeGroups] Failed to merge tabs for group "${title}":`,
+          err
+        );
+      }
     }
-    logger.log(
-      `[mergeGroups] Target group is ${targetGroup.id} in window ${targetGroup.windowId}.`
-    );
-
-    const sourceGroups = groups.filter((g) => g.id !== targetGroup.id);
-
-    // 4. Get all tabs from all source groups
-    const tabQueries = sourceGroups.map((g) =>
-      chrome.tabs.query({ groupId: g.id })
-    );
-    const nestedTabs = await Promise.all(tabQueries);
-    const tabsToMove = nestedTabs.flat();
-    const tabIdsToMove = tabsToMove.map((t) => t.id);
-
-    if (tabIdsToMove.length === 0) continue;
-
-    // 5. Move tabs to the target window and add them to the target group
-    logger.log(
-      `[mergeGroups] Moving ${tabIdsToMove.length} tabs to group ${targetGroup.id}.`
-    );
-    await chrome.tabs.move(tabIdsToMove, {
-      windowId: targetGroup.windowId,
-      index: -1,
-    });
-    await chrome.tabs.group({ groupId: targetGroup.id, tabIds: tabIdsToMove });
+    logger.log("[mergeGroups] Merge operation complete.");
+  } catch (err) {
+    logger.error("[mergeGroups] Failed to merge groups:", err);
   }
-  logger.log("[mergeGroups] Merge operation complete.");
 }
 
 // --- Event Listeners ---

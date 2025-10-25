@@ -18,6 +18,7 @@ export default [
         Map: "readonly",
         Set: "readonly",
         URL: "readonly",
+        alert: "readonly",
       },
     },
     rules: {

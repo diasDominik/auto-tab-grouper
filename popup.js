@@ -85,12 +85,18 @@ document.getElementById("openOptions").addEventListener("click", () => {
 
 document.getElementById("addCurrent").addEventListener("click", async () => {
   const btn = document.getElementById("addCurrent");
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab || !tab.url || !tab.url.startsWith("http")) return;
-
-  btn.disabled = true; // Disable button during processing
 
   try {
+    const [tab] = await chrome.tabs.query({
+      active: true,
+      currentWindow: true,
+    });
+    if (!tab || !tab.url || !tab.url.startsWith("http")) {
+      return;
+    }
+
+    btn.disabled = true; // Disable button during processing
+
     const domain = new URL(tab.url).hostname.replace(/^www\./, "");
     const parts = domain.split(".");
     const ruleKey =
@@ -99,7 +105,7 @@ document.getElementById("addCurrent").addEventListener("click", async () => {
 
     chrome.storage.sync.get({ domainGroups: {} }, (result) => {
       const domainGroups = result.domainGroups;
-      const ruleAlreadyExists = !!domainGroups[ruleKey]; // Check if rule exists before proceeding
+      const ruleAlreadyExists = !!domainGroups[ruleKey];
 
       if (!ruleAlreadyExists) {
         domainGroups[ruleKey] = {
