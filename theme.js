@@ -4,6 +4,11 @@ document.addEventListener("DOMContentLoaded", () => {
   const themeToggle = document.getElementById("theme-toggle");
   const body = document.body;
 
+  // Check if theme toggle button exists (it may not be present on all pages)
+  if (!themeToggle) {
+    return;
+  }
+
   // SVG icons for the button
   const icons = {
     system:
@@ -14,10 +19,15 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   const applyTheme = (theme) => {
+    // Validate theme value
+    const validTheme = ["light", "dark", "system"].includes(theme)
+      ? theme
+      : "system";
+
     // Apply theme to the body
-    if (theme === "light") {
+    if (validTheme === "light") {
       body.classList.remove("dark-theme");
-    } else if (theme === "dark") {
+    } else if (validTheme === "dark") {
       body.classList.add("dark-theme");
     } else {
       // 'system'
@@ -31,10 +41,10 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
     // Update icon and title
-    themeToggle.innerHTML = icons[theme];
+    themeToggle.innerHTML = icons[validTheme];
     themeToggle.setAttribute(
       "title",
-      `Theme: ${theme.charAt(0).toUpperCase() + theme.slice(1)}`
+      `Theme: ${validTheme.charAt(0).toUpperCase() + validTheme.slice(1)}`
     );
   };
 

@@ -82,6 +82,16 @@ function createInPlaceEditForm(container, originalKey, info, domainGroups) {
     const newTitle = titleInput.value.trim();
     if (!newKey || !newTitle) return; // Basic validation
 
+    // Validate regex if the checkbox is checked
+    if (regexCheckbox.checked) {
+      try {
+        new RegExp(newKey);
+      } catch (e) {
+        alert(`Invalid regex pattern: ${e.message}`);
+        return;
+      }
+    }
+
     // If the key has changed, we must remove the old one.
     if (originalKey !== newKey) {
       delete domainGroups[originalKey];
@@ -222,6 +232,16 @@ saveRuleBtn.addEventListener("click", () => {
   const newDomain = domainInput.value.trim();
   const newTitle = titleInput.value.trim();
   if (!newDomain || !newTitle) return;
+
+  // Validate regex if the checkbox is checked
+  if (isRegexCheckbox.checked) {
+    try {
+      new RegExp(newDomain);
+    } catch (e) {
+      alert(`Invalid regex pattern: ${e.message}`);
+      return;
+    }
+  }
 
   chrome.storage.sync.get({ domainGroups: {} }, (result) => {
     const domainGroups = result.domainGroups;

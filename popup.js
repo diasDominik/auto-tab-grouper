@@ -55,7 +55,7 @@ document.getElementById("consolidateTabsBtn").addEventListener("click", () => {
   btn.textContent = "Working...";
   btn.disabled = true;
 
-  chrome.runtime.sendMessage({ action: "consolidateTabs" }, (response) => {
+  chrome.runtime.sendMessage({ action: "consolidateTabs" }, () => {
     btn.textContent = "Done!";
     setTimeout(() => {
       btn.textContent = "Group All";
@@ -70,7 +70,7 @@ document.getElementById("mergeGroupsBtn").addEventListener("click", () => {
   btn.textContent = "Merging...";
   btn.disabled = true;
 
-  chrome.runtime.sendMessage({ action: "mergeGroups" }, (response) => {
+  chrome.runtime.sendMessage({ action: "mergeGroups" }, () => {
     btn.textContent = "Done!";
     setTimeout(() => {
       btn.textContent = "Merge Groups";
@@ -85,12 +85,18 @@ document.getElementById("openOptions").addEventListener("click", () => {
 
 document.getElementById("addCurrent").addEventListener("click", async () => {
   const btn = document.getElementById("addCurrent");
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab || !tab.url || !tab.url.startsWith("http")) return;
-
-  btn.disabled = true; // Disable button during processing
 
   try {
+    const [tab] = await chrome.tabs.query({
+      active: true,
+      currentWindow: true,
+    });
+    if (!tab || !tab.url || !tab.url.startsWith("http")) {
+      return;
+    }
+
+    btn.disabled = true; // Disable button during processing
+
     const domain = new URL(tab.url).hostname.replace(/^www\./, "");
     const parts = domain.split(".");
     const ruleKey =
@@ -99,7 +105,7 @@ document.getElementById("addCurrent").addEventListener("click", async () => {
 
     chrome.storage.sync.get({ domainGroups: {} }, (result) => {
       const domainGroups = result.domainGroups;
-      const ruleAlreadyExists = !!domainGroups[ruleKey]; // Check if rule exists before proceeding
+      const ruleAlreadyExists = !!domainGroups[ruleKey];
 
       if (!ruleAlreadyExists) {
         domainGroups[ruleKey] = {
@@ -134,7 +140,7 @@ document.getElementById("addCurrent").addEventListener("click", async () => {
 });
 
 // Listen for storage changes to keep the popup in sync
-chrome.storage.onChanged.addListener((changes, namespace) => {
+chrome.storage.onChanged.addListener((changes) => {
   if (changes.domainGroups) {
     renderDomains(changes.domainGroups.newValue);
   }
