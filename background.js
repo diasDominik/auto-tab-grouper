@@ -9,7 +9,7 @@ const logger = {
   },
   error: (...args) => console.error("[Auto Tab Grouper]", ...args),
 };
-// ... (logger setup code remains the same) ...
+
 async function updateDebugState() {
   const result = await chrome.storage.sync.get({ debugModeEnabled: false });
   debugMode = result.debugModeEnabled;
@@ -23,13 +23,10 @@ chrome.storage.onChanged.addListener((changes) => {
   }
 });
 
-// --- Queuing system (remains the same) ---
+// --- Queuing system ---
 let tabQueue = [];
 let isProcessingQueue = false;
-async function processQueue() {
-  /* ... */
-}
-// ... (queuing, getDomain, getConfig, handleTab functions remain the same) ...
+
 async function processQueue() {
   if (isProcessingQueue || tabQueue.length === 0) return;
   isProcessingQueue = true;
@@ -72,7 +69,7 @@ async function handleTab({ tabId, url, windowId }, retryCount = 0) {
   let tab;
   try {
     tab = await chrome.tabs.get(tabId);
-  } catch (err) {
+  } catch {
     logger.log(`[handleTab] Tab not found: ${tabId}, likely closed.`);
     return;
   }

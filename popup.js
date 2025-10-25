@@ -55,7 +55,7 @@ document.getElementById("consolidateTabsBtn").addEventListener("click", () => {
   btn.textContent = "Working...";
   btn.disabled = true;
 
-  chrome.runtime.sendMessage({ action: "consolidateTabs" }, (response) => {
+  chrome.runtime.sendMessage({ action: "consolidateTabs" }, () => {
     btn.textContent = "Done!";
     setTimeout(() => {
       btn.textContent = "Group All";
@@ -70,7 +70,7 @@ document.getElementById("mergeGroupsBtn").addEventListener("click", () => {
   btn.textContent = "Merging...";
   btn.disabled = true;
 
-  chrome.runtime.sendMessage({ action: "mergeGroups" }, (response) => {
+  chrome.runtime.sendMessage({ action: "mergeGroups" }, () => {
     btn.textContent = "Done!";
     setTimeout(() => {
       btn.textContent = "Merge Groups";
@@ -134,7 +134,7 @@ document.getElementById("addCurrent").addEventListener("click", async () => {
 });
 
 // Listen for storage changes to keep the popup in sync
-chrome.storage.onChanged.addListener((changes, namespace) => {
+chrome.storage.onChanged.addListener((changes) => {
   if (changes.domainGroups) {
     renderDomains(changes.domainGroups.newValue);
   }
