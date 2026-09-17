@@ -26,3 +26,6 @@ desktop.ini
 # /dist
 # /build
 # /out
+# Build Output
+# The packaged extension ZIP, produced by `npm run package`.
+/dist

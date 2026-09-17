@@ -1,0 +1,83 @@
+name: Package
+
+# Builds the Chrome Web Store upload ZIP. Nothing is published automatically:
+# the archive is attached as a workflow artifact (and to a GitHub Release when
+# triggered by a tag) for manual upload to the store.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # Never ship something that would not have passed CI.
+      - name: Lint
+        run: npx eslint .
+
+      - name: Check formatting
+        run: npx prettier --check .
+
+      - name: Test
+        run: node --test
+
+      - name: Verify store assets
+        run: node tools/verify-store-assets.mjs
+
+      - name: Build package
+        run: node tools/build-package.mjs
+
+      - name: Read manifest version
+        id: manifest
+        run: echo "version=$(node -p "require('./manifest.json').version")" >> "$GITHUB_OUTPUT"
+
+      # A tag must agree with the manifest, or the wrong version gets uploaded.
+      - name: Check tag matches manifest version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          manifest="${{ steps.manifest.outputs.version }}"
+          if [ "$tag" != "$manifest" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match manifest version $manifest" >&2
+            exit 1
+          fi
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: auto-tab-grouper-v${{ steps.manifest.outputs.version }}
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 90
+
+      # The listing images are not part of the upload ZIP, but they are what
+      # you fill the store listing in with, so ship them alongside.
+      - name: Upload store listing images
+        uses: actions/upload-artifact@v4
+        with:
+          name: store-listing-images-v${{ steps.manifest.outputs.version }}
+          path: store-assets/*.png
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Attach package to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          draft: true
+          generate_release_notes: true

@@ -10,7 +10,8 @@
     "format:check": "prettier --check .",
     "icons": "node tools/build-icons.mjs",
     "store-assets": "node tools/build-store-assets.mjs",
-    "verify-assets": "node tools/verify-store-assets.mjs"
+    "verify-assets": "node tools/verify-store-assets.mjs",
+    "package": "node tools/build-package.mjs"
   },
   "keywords": [],
   "author": "",
