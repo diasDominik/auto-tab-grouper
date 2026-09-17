@@ -11,7 +11,8 @@
     "icons": "node tools/build-icons.mjs",
     "store-assets": "node tools/build-store-assets.mjs",
     "verify-assets": "node tools/verify-store-assets.mjs",
-    "package": "node tools/build-package.mjs"
+    "package": "node tools/build-package.mjs",
+    "set-version": "node tools/set-version.mjs"
   },
   "keywords": [],
   "author": "",
