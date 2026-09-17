@@ -5,6 +5,11 @@ name: Package
 # triggered by a tag) for manual upload to the store.
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to stamp (e.g. 1.4.0). Defaults to manifest.json."
+        required: false
+        type: string
   push:
     tags:
       - "v*"
@@ -38,23 +43,30 @@ jobs:
       - name: Verify store assets
         run: node tools/verify-store-assets.mjs
 
-      - name: Build package
-        run: node tools/build-package.mjs
+      # The tag is the source of truth for a release: stamp it into the
+      # manifest so the ZIP always carries the version you tagged, instead of
+      # failing when the committed manifest has not been bumped. This edits the
+      # checkout only; nothing is committed back.
+      - name: Stamp version
+        # The input arrives through the environment rather than through ${{ }}
+        # interpolation, which would splice it into the shell command itself.
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ -n "$INPUT_VERSION" ]; then
+            node tools/set-version.mjs "$INPUT_VERSION"
+          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            node tools/set-version.mjs "$GITHUB_REF_NAME"
+          else
+            echo "No tag or input given; keeping the committed manifest version."
+          fi
 
-      - name: Read manifest version
+      - name: Read version
         id: manifest
         run: echo "version=$(node -p "require('./manifest.json').version")" >> "$GITHUB_OUTPUT"
 
-      # A tag must agree with the manifest, or the wrong version gets uploaded.
-      - name: Check tag matches manifest version
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          tag="${GITHUB_REF_NAME#v}"
-          manifest="${{ steps.manifest.outputs.version }}"
-          if [ "$tag" != "$manifest" ]; then
-            echo "Tag $GITHUB_REF_NAME does not match manifest version $manifest" >&2
-            exit 1
-          fi
+      - name: Build package
+        run: node tools/build-package.mjs
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v4

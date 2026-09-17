@@ -115,9 +115,38 @@ Run it either way:
 Either run uploads two artifacts: the extension ZIP, and the store listing
 images from `store-assets/` for filling in the listing itself.
 
-To cut a release: bump the version in **both** `manifest.json` and
-`package.json`, commit, tag, push the tag, then download the artifact and
-upload it at the [developer dashboard](https://chrome.google.com/webstore/devconsole).
+### The tag sets the version
+
+A tag build stamps its own version into `manifest.json` before packaging, so
+`v1.4.0` produces an extension versioned `1.4.0` whatever the committed
+manifest says. The stamp applies to the workflow's checkout only — nothing is
+committed back, so the version in git does not move on its own.
+
+To cut a release, tag and push:
+
+```bash
+git tag v1.4.0 && git push origin v1.4.0
+```
+
+Then download the artifact and upload it at the
+[developer dashboard](https://chrome.google.com/webstore/devconsole).
+
+That is the whole release. The version in `manifest.json` is never edited by
+hand — the tag is the only place a release version is written.
+
+Because of that, the committed `manifest.json` deliberately lags behind what is
+published, and that is expected rather than a mistake to correct. The one case
+worth knowing: running the workflow manually with no version input packages
+whatever version happens to be committed, so pass the version explicitly when
+dispatching a build that you intend to upload.
+
+`npm run set-version <version>` writes both files if you ever do want the repo
+to match the store, but no release requires it.
+
+Chrome's version format is narrower than semver: one to four dotted integers,
+each 0-65535, no leading zeros, and **no pre-release suffix**. `v1.4.0-beta.1`
+is a valid git tag and an invalid extension version, so the build rejects it
+up front rather than letting the store do it.
 
 Build the same ZIP locally with `npm run package`; it lands in `dist/`.
 
