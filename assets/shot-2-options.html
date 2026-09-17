@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="/assets/shot-frame.css" />
+    <style>
+      .device,
+      .device iframe {
+        width: 900px;
+        height: 600px;
+      }
+      .device {
+        transform: scale(0.95);
+        transform-origin: top center;
+      }
+      .scaled {
+        height: 570px;
+        display: flex;
+        justify-content: center;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="stage">
+      <div class="caption">
+        <h1>Wildcards, exact hosts, or full regex</h1>
+        <p>
+          The most specific rule wins &mdash; whatever order you added them in.
+        </p>
+      </div>
+      <div class="scaled">
+        <div class="device">
+          <iframe src="/assets/shot-options.html?theme=light"></iframe>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

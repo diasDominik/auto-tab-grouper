@@ -1,25 +1,29 @@
 // popup.js
 
+import { deriveRuleFromHostname, isRuleEnabled } from "./rules.js";
+import { getSettings, saveRules, describeSaveError } from "./storage.js";
+import { renderRuleLabel, setStatus, markDisabledState } from "./ui.js";
+
+const statusEl = document.getElementById("status");
+
 function renderDomains(domainGroups) {
   const container = document.getElementById("domainList");
-  container.innerHTML = "";
+  container.textContent = "";
+  container.classList.toggle(
+    "is-empty",
+    Object.keys(domainGroups).length === 0
+  );
 
   if (Object.keys(domainGroups).length === 0) {
-    container.style.textAlign = "center";
-    container.style.color = "var(--text-secondary-color)";
     container.textContent = "No rules yet. Add one in Settings!";
     return;
   }
 
   for (const [domain, info] of Object.entries(domainGroups)) {
     const div = document.createElement("div");
-    div.className = "domain-item popup-rule"; // Added a new class for specific styling
-    div.title = `Click to ${info.enabled !== false ? "disable" : "enable"} this rule`;
-
-    // Add a class to visually show the disabled state
-    if (info.enabled === false) {
-      div.classList.add("disabled-rule");
-    }
+    div.className = "domain-item popup-rule";
+    div.title = `Click to ${isRuleEnabled(info) ? "disable" : "enable"} this rule`;
+    markDisabledState(div, info);
 
     const colorBox = document.createElement("div");
     colorBox.className = "color-box";
@@ -27,20 +31,20 @@ function renderDomains(domainGroups) {
 
     const label = document.createElement("span");
     label.className = "domain-name";
+    renderRuleLabel(label, domain, info);
 
-    const ruleType = info.isRegex
-      ? `<span class="rule-type">(regex)</span> `
-      : "";
-    label.innerHTML = `${ruleType}${domain} &rarr; ${info.title}`;
-
-    // Make the entire item clickable to toggle the rule
-    div.onclick = () => {
-      // Toggle the 'enabled' state (defaulting to true if undefined)
-      info.enabled = !(info.enabled !== false);
-      domainGroups[domain] = info;
-      chrome.storage.sync.set({ domainGroups }, () => {
-        renderDomains(domainGroups);
-      });
+    div.onclick = async () => {
+      const next = {
+        ...domainGroups,
+        [domain]: { ...info, enabled: !isRuleEnabled(info) },
+      };
+      try {
+        await saveRules(next);
+        setStatus(statusEl, "");
+        renderDomains(next);
+      } catch (err) {
+        setStatus(statusEl, describeSaveError(err));
+      }
     };
 
     div.appendChild(colorBox);
@@ -49,34 +53,46 @@ function renderDomains(domainGroups) {
   }
 }
 
-// Event listener for the "Group All" button
-document.getElementById("consolidateTabsBtn").addEventListener("click", () => {
-  const btn = document.getElementById("consolidateTabsBtn");
-  btn.textContent = "Working...";
-  btn.disabled = true;
+/**
+ * Wires a button that sends one message to the service worker, keeping it
+ * disabled until a response arrives so a failure cannot strand the label.
+ */
+function wireActionButton(id, { busyLabel, message, onSuccess }) {
+  const btn = document.getElementById(id);
+  const idleLabel = btn.textContent;
 
-  chrome.runtime.sendMessage({ action: "consolidateTabs" }, (response) => {
-    btn.textContent = "Done!";
-    setTimeout(() => {
-      btn.textContent = "Group All";
+  btn.addEventListener("click", async () => {
+    btn.textContent = busyLabel;
+    btn.disabled = true;
+    try {
+      const response = await chrome.runtime.sendMessage(message);
+      if (response?.status === "error") {
+        setStatus(statusEl, response.message || "Something went wrong.");
+        btn.textContent = idleLabel;
+      } else {
+        setStatus(statusEl, "");
+        btn.textContent = onSuccess?.(response) ?? "Done!";
+        setTimeout(() => {
+          btn.textContent = idleLabel;
+        }, 1500);
+      }
+    } catch (err) {
+      setStatus(statusEl, err?.message ?? String(err));
+      btn.textContent = idleLabel;
+    } finally {
       btn.disabled = false;
-    }, 1500);
+    }
   });
+}
+
+wireActionButton("consolidateTabsBtn", {
+  busyLabel: "Working...",
+  message: { action: "consolidateTabs" },
 });
 
-// Event listener for the "Merge Groups" button
-document.getElementById("mergeGroupsBtn").addEventListener("click", () => {
-  const btn = document.getElementById("mergeGroupsBtn");
-  btn.textContent = "Merging...";
-  btn.disabled = true;
-
-  chrome.runtime.sendMessage({ action: "mergeGroups" }, (response) => {
-    btn.textContent = "Done!";
-    setTimeout(() => {
-      btn.textContent = "Merge Groups";
-      btn.disabled = false;
-    }, 1500);
-  });
+wireActionButton("mergeGroupsBtn", {
+  busyLabel: "Merging...",
+  message: { action: "mergeGroups" },
 });
 
 document.getElementById("openOptions").addEventListener("click", () => {
@@ -86,61 +102,49 @@ document.getElementById("openOptions").addEventListener("click", () => {
 document.getElementById("addCurrent").addEventListener("click", async () => {
   const btn = document.getElementById("addCurrent");
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab || !tab.url || !tab.url.startsWith("http")) return;
+  if (!tab?.url?.startsWith("http")) {
+    setStatus(statusEl, "This tab cannot be grouped.");
+    return;
+  }
 
-  btn.disabled = true; // Disable button during processing
-
+  btn.disabled = true;
   try {
-    const domain = new URL(tab.url).hostname.replace(/^www\./, "");
-    const parts = domain.split(".");
-    const ruleKey =
-      parts.length > 2 ? "*." + parts.slice(-2).join(".") : domain;
-    const title = parts.length > 1 ? parts.slice(-2).join(".") : domain;
+    const { hostname } = new URL(tab.url);
+    const { ruleKey, title } = deriveRuleFromHostname(hostname);
+    const { domainGroups } = await getSettings({ domainGroups: {} });
 
-    chrome.storage.sync.get({ domainGroups: {} }, (result) => {
-      const domainGroups = result.domainGroups;
-      const ruleAlreadyExists = !!domainGroups[ruleKey]; // Check if rule exists before proceeding
+    if (domainGroups[ruleKey]) {
+      setStatus(statusEl, `A rule for ${ruleKey} already exists.`);
+      return;
+    }
 
-      if (!ruleAlreadyExists) {
-        domainGroups[ruleKey] = {
-          title,
-          color: "blue",
-          enabled: true,
-          isRegex: false,
-        };
-        chrome.storage.sync.set({ domainGroups }, () => {
-          const tabInfo = {
-            tabId: tab.id,
-            url: tab.url,
-            windowId: tab.windowId,
-          };
-          chrome.runtime.sendMessage(
-            { action: "processSpecificTab", tabInfo: tabInfo },
-            () => {
-              setTimeout(() => {
-                btn.disabled = false;
-              }, 500);
-            }
-          );
-        });
-      } else {
-        btn.disabled = false; // Rule already exists, just re-enable the button
-      }
+    domainGroups[ruleKey] = {
+      title,
+      color: "blue",
+      enabled: true,
+      isRegex: false,
+    };
+    await saveRules(domainGroups);
+    setStatus(statusEl, "");
+    await chrome.runtime.sendMessage({
+      action: "processSpecificTab",
+      tabInfo: { tabId: tab.id, url: tab.url, windowId: tab.windowId },
     });
-  } catch (e) {
-    console.error("Could not add current tab as rule:", e);
-    btn.disabled = false; // Re-enable button on error
+  } catch (err) {
+    setStatus(statusEl, describeSaveError(err));
+  } finally {
+    btn.disabled = false;
   }
 });
 
-// Listen for storage changes to keep the popup in sync
-chrome.storage.onChanged.addListener((changes, namespace) => {
+// Keep the popup in sync with the options page.
+chrome.storage.onChanged.addListener((changes) => {
   if (changes.domainGroups) {
-    renderDomains(changes.domainGroups.newValue);
+    renderDomains(changes.domainGroups.newValue ?? {});
   }
 });
 
 // Initial load
-chrome.storage.sync.get({ domainGroups: {} }, (result) => {
-  renderDomains(result.domainGroups);
-});
+getSettings({ domainGroups: {} })
+  .then((result) => renderDomains(result.domainGroups))
+  .catch((err) => setStatus(statusEl, `Could not load rules: ${err.message}`));

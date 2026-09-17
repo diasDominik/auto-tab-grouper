@@ -14,22 +14,12 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   const applyTheme = (theme) => {
-    // Apply theme to the body
-    if (theme === "light") {
-      body.classList.remove("dark-theme");
-    } else if (theme === "dark") {
-      body.classList.add("dark-theme");
-    } else {
-      // 'system'
-      if (
-        window.matchMedia &&
-        window.matchMedia("(prefers-color-scheme: dark)").matches
-      ) {
-        body.classList.add("dark-theme");
-      } else {
-        body.classList.remove("dark-theme");
-      }
-    }
+    // All three states are expressible in CSS: "light" and "dark" pin the
+    // palette, "system" removes both classes and lets the
+    // prefers-color-scheme block in style.css decide. That is what keeps the
+    // popup from rendering light for a frame before this code runs.
+    body.classList.toggle("dark-theme", theme === "dark");
+    body.classList.toggle("light-theme", theme === "light");
     // Update icon and title
     themeToggle.innerHTML = icons[theme];
     themeToggle.setAttribute(
@@ -62,15 +52,6 @@ document.addEventListener("DOMContentLoaded", () => {
     applyTheme(data.theme);
   });
 
-  // Listen for system theme changes
-  window
-    .matchMedia("(prefers-color-scheme: dark)")
-    .addEventListener("change", () => {
-      chrome.storage.sync.get({ theme: "system" }, (data) => {
-        // Only re-apply if the current setting is 'system'
-        if (data.theme === "system") {
-          applyTheme("system");
-        }
-      });
-    });
+  // System theme changes need no listener: with no class on <body>,
+  // the prefers-color-scheme block in style.css follows the OS on its own.
 });

@@ -12,8 +12,8 @@ Auto Tab Grouper operates entirely locally on your computer. We do **not** colle
 
 The extension's purpose is to organize your browser tabs. To achieve this, the extension performs the following actions exclusively within your browser:
 
-* **Rule Matching:** The extension reads the URL of your currently open tabs solely for the purpose of matching them against the grouping rules you have configured. This processing happens locally and in real-time. Tab URLs are not logged or stored.
-* **Configuration Storage:** The rules you create (including domain patterns, regular expressions, group titles, and color preferences) are saved using Chrome's built-in `storage` API. This data is stored locally on your device and may be synchronized across your devices if you have enabled Chrome Sync in your browser settings. The developer has no access to this data.
+- **Rule Matching:** The extension reads the URL of your currently open tabs solely for the purpose of matching them against the grouping rules you have configured. This processing happens locally and in real-time. Tab URLs are not logged or stored.
+- **Configuration Storage:** The rules you create (including domain patterns, regular expressions, group titles, and color preferences) are saved using Chrome's built-in `storage` API. This data is stored locally on your device and may be synchronized across your devices if you have enabled Chrome Sync in your browser settings. The developer has no access to this data.
 
 #### 3. Data Sharing and Third Parties
 

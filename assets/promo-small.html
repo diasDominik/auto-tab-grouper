@@ -1,0 +1,58 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      /* Small promotional tile, 440x280. Per the store's promo guidance:
+         no text, saturated colour, well-defined edges, and it must still read
+         when shrunk to half size.
+         html/body need a resolved height or .tile's height:100% collapses and
+         the tile stops being full bleed. */
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        overflow: hidden;
+      }
+      .tile {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        /* Deep navy, so all three card colours -- including the blue one --
+           keep their edges. A blue ground swallowed the blue card. */
+        background: linear-gradient(
+          135deg,
+          #0a1b3d 0%,
+          #12306b 55%,
+          #0d2547 100%
+        );
+        position: relative;
+        overflow: hidden;
+      }
+      .tile::after {
+        content: "";
+        position: absolute;
+        inset: auto -20% -45% auto;
+        width: 70%;
+        height: 115%;
+        background: radial-gradient(
+          ellipse at 70% 70%,
+          rgba(238, 119, 17, 0.42),
+          transparent 62%
+        );
+      }
+      img {
+        position: relative;
+        width: 196px;
+        height: 196px;
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="tile"><img src="/assets/icon.svg" /></div>
+  </body>
+</html>
