@@ -1,5 +1,14 @@
 // options.js
 
+import { GROUP_COLORS, isRuleEnabled, validateRule } from "./rules.js";
+import {
+  getSettings,
+  setSettings,
+  saveRules,
+  describeSaveError,
+} from "./storage.js";
+import { renderRuleLabel, setStatus, markDisabledState } from "./ui.js";
+
 // DOM Elements
 const domainInput = document.getElementById("domain");
 const titleInput = document.getElementById("title");
@@ -9,10 +18,12 @@ const existingGroupsDropdown = document.getElementById("existingGroups");
 const saveRuleBtn = document.getElementById("saveRuleBtn");
 const domainListContainer = document.getElementById("domainList");
 const debugModeCheckbox = document.getElementById("debugModeCheckbox");
+const exportBtn = document.getElementById("exportRulesBtn");
+const importBtn = document.getElementById("importRulesBtn");
+const importFileInput = document.getElementById("importRulesFile");
+const statusEl = document.getElementById("status");
 
-/**
- * Resets the main form used for adding new rules.
- */
+/** Resets the main form used for adding new rules. */
 function resetAddForm() {
   domainInput.value = "";
   titleInput.value = "";
@@ -22,48 +33,58 @@ function resetAddForm() {
 }
 
 /**
+ * Persists rules and re-renders, reporting any storage failure to the user.
+ * @param {object} domainGroups
+ * @returns {Promise<boolean>} whether the save succeeded.
+ */
+async function persist(domainGroups) {
+  try {
+    await saveRules(domainGroups);
+    setStatus(statusEl, "");
+    await renderDomains(domainGroups);
+    return true;
+  } catch (err) {
+    setStatus(statusEl, describeSaveError(err));
+    return false;
+  }
+}
+
+function buildColorSelect(selected) {
+  const select = document.createElement("select");
+  for (const color of GROUP_COLORS) {
+    const option = document.createElement("option");
+    option.value = color;
+    option.textContent = color.charAt(0).toUpperCase() + color.slice(1);
+    if (color === selected) option.selected = true;
+    select.appendChild(option);
+  }
+  return select;
+}
+
+/**
  * Creates an in-place form to edit an existing rule.
- * @param {HTMLElement} container - The <div> element of the rule to be edited.
+ * @param {HTMLElement} container - The <div> element of the rule being edited.
  * @param {string} originalKey - The original domain/regex key for the rule.
  * @param {object} info - The rule's configuration object {title, color, ...}.
  * @param {object} domainGroups - The complete set of all domain groups.
  */
 function createInPlaceEditForm(container, originalKey, info, domainGroups) {
-  container.innerHTML = ""; // Clear the static content
-  container.style.flexWrap = "wrap"; // Allow inputs to wrap if needed
+  container.textContent = "";
+  container.style.flexWrap = "wrap";
 
-  // --- Create and configure input elements ---
   const keyInput = document.createElement("input");
   keyInput.type = "text";
   keyInput.value = originalKey;
   keyInput.placeholder = "Domain or Regex";
-  keyInput.style.flex = "2 1 150px"; // Grow and shrink, base width 150px
+  keyInput.style.flex = "2 1 150px";
 
-  const titleInput = document.createElement("input");
-  titleInput.type = "text";
-  titleInput.value = info.title;
-  titleInput.placeholder = "Group Title";
-  titleInput.style.flex = "1 1 120px";
+  const editTitleInput = document.createElement("input");
+  editTitleInput.type = "text";
+  editTitleInput.value = info.title;
+  editTitleInput.placeholder = "Group Title";
+  editTitleInput.style.flex = "1 1 120px";
 
-  const editColorSelect = document.createElement("select");
-  const colors = [
-    "grey",
-    "blue",
-    "red",
-    "yellow",
-    "green",
-    "pink",
-    "purple",
-    "cyan",
-    "orange",
-  ];
-  colors.forEach((color) => {
-    const option = document.createElement("option");
-    option.value = color;
-    option.textContent = color.charAt(0).toUpperCase() + color.slice(1);
-    if (color === info.color) option.selected = true;
-    editColorSelect.appendChild(option);
-  });
+  const editColorSelect = buildColorSelect(info.color);
 
   const regexLabel = document.createElement("label");
   regexLabel.className = "checkbox-label";
@@ -73,51 +94,51 @@ function createInPlaceEditForm(container, originalKey, info, domainGroups) {
   regexLabel.appendChild(regexCheckbox);
   regexLabel.append(" Regex");
 
-  // --- Create action buttons ---
   const saveBtn = document.createElement("button");
   saveBtn.textContent = "Save";
   saveBtn.className = "btn-primary";
-  saveBtn.onclick = () => {
+  saveBtn.onclick = async () => {
     const newKey = keyInput.value.trim();
-    const newTitle = titleInput.value.trim();
-    if (!newKey || !newTitle) return; // Basic validation
+    const newTitle = editTitleInput.value.trim();
 
-    // If the key has changed, we must remove the old one.
-    if (originalKey !== newKey) {
-      delete domainGroups[originalKey];
+    const error = validateRule(newKey, newTitle, regexCheckbox.checked);
+    if (error) {
+      setStatus(statusEl, error);
+      return;
+    }
+    // Renaming onto another rule's key would silently destroy that rule.
+    if (newKey !== originalKey && domainGroups[newKey]) {
+      setStatus(statusEl, `A rule for "${newKey}" already exists.`);
+      return;
     }
 
-    // Update or create the new entry, preserving the enabled state
-    domainGroups[newKey] = {
+    const next = { ...domainGroups };
+    if (originalKey !== newKey) delete next[originalKey];
+    next[newKey] = {
       title: newTitle,
       color: editColorSelect.value,
       isRegex: regexCheckbox.checked,
       enabled: info.enabled,
     };
 
-    chrome.storage.sync.set({ domainGroups }, () =>
-      renderDomains(domainGroups)
-    );
+    await persist(next);
   };
 
   const cancelBtn = document.createElement("button");
   cancelBtn.textContent = "Cancel";
   cancelBtn.className = "btn-secondary";
   cancelBtn.onclick = () => {
-    // Just re-render the list to cancel the edit
+    setStatus(statusEl, "");
     renderDomains(domainGroups);
   };
 
   const buttonWrapper = document.createElement("div");
-  buttonWrapper.style.marginLeft = "auto";
-  buttonWrapper.style.display = "flex";
-  buttonWrapper.style.gap = "6px";
+  buttonWrapper.className = "item-actions";
   buttonWrapper.appendChild(saveBtn);
   buttonWrapper.appendChild(cancelBtn);
 
-  // --- Append all new elements to the container ---
   container.appendChild(keyInput);
-  container.appendChild(titleInput);
+  container.appendChild(editTitleInput);
   container.appendChild(editColorSelect);
   container.appendChild(regexLabel);
   container.appendChild(buttonWrapper);
@@ -128,7 +149,7 @@ function createInPlaceEditForm(container, originalKey, info, domainGroups) {
  * @param {object} domainGroups - The object containing all grouping rules.
  */
 async function renderDomains(domainGroups) {
-  domainListContainer.innerHTML = "";
+  domainListContainer.textContent = "";
 
   // Populate the "Select Existing" dropdown
   const uniqueTitles = new Set();
@@ -141,8 +162,9 @@ async function renderDomains(domainGroups) {
   } catch (error) {
     console.error("Could not query tab groups:", error);
   }
-  while (existingGroupsDropdown.options.length > 1)
+  while (existingGroupsDropdown.options.length > 1) {
     existingGroupsDropdown.remove(1);
+  }
   [...uniqueTitles].sort().forEach((title) => {
     const option = document.createElement("option");
     option.value = title;
@@ -150,7 +172,6 @@ async function renderDomains(domainGroups) {
     existingGroupsDropdown.appendChild(option);
   });
 
-  // Render each rule item
   for (const [domain, info] of Object.entries(domainGroups)) {
     const div = document.createElement("div");
     div.className = "domain-item";
@@ -161,31 +182,22 @@ async function renderDomains(domainGroups) {
 
     const label = document.createElement("span");
     label.className = "domain-name";
-    if (info.enabled === false) {
-      label.style.opacity = "0.5";
-      label.style.textDecoration = "line-through";
-    }
-    const ruleType = info.isRegex
-      ? `<span class="rule-type">(regex)</span> `
-      : "";
-    label.innerHTML = `${ruleType}${domain} &rarr; <strong>${info.title}</strong>`;
+    markDisabledState(label, info);
+    renderRuleLabel(label, domain, info, { strongTitle: true });
 
-    // --- Action Buttons (Toggle, Edit, Remove) ---
     const toggleBtn = document.createElement("button");
     toggleBtn.className = "btn-secondary";
-    toggleBtn.textContent = info.enabled === false ? "Enable" : "Disable";
-    toggleBtn.onclick = () => {
-      domainGroups[domain].enabled = !(info.enabled !== false);
-      chrome.storage.sync.set({ domainGroups }, () =>
-        renderDomains(domainGroups)
-      );
-    };
+    toggleBtn.textContent = isRuleEnabled(info) ? "Disable" : "Enable";
+    toggleBtn.onclick = () =>
+      persist({
+        ...domainGroups,
+        [domain]: { ...info, enabled: !isRuleEnabled(info) },
+      });
 
     const editBtn = document.createElement("button");
     editBtn.className = "btn-secondary";
     editBtn.textContent = "Edit";
     editBtn.onclick = (e) => {
-      // Find the parent .domain-item and pass it to the form creation function
       const itemContainer = e.target.closest(".domain-item");
       createInPlaceEditForm(itemContainer, domain, info, domainGroups);
     };
@@ -194,16 +206,13 @@ async function renderDomains(domainGroups) {
     removeBtn.className = "btn-remove";
     removeBtn.textContent = "Remove";
     removeBtn.onclick = () => {
-      delete domainGroups[domain];
-      chrome.storage.sync.set({ domainGroups }, () =>
-        renderDomains(domainGroups)
-      );
+      const next = { ...domainGroups };
+      delete next[domain];
+      persist(next);
     };
 
     const buttonsWrapper = document.createElement("div");
-    buttonsWrapper.style.marginLeft = "auto";
-    buttonsWrapper.style.display = "flex";
-    buttonsWrapper.style.gap = "6px";
+    buttonsWrapper.className = "item-actions";
     buttonsWrapper.appendChild(toggleBtn);
     buttonsWrapper.appendChild(editBtn);
     buttonsWrapper.appendChild(removeBtn);
@@ -217,55 +226,140 @@ async function renderDomains(domainGroups) {
 
 // --- Event Listeners ---
 
-// Main "Add Rule" button logic
-saveRuleBtn.addEventListener("click", () => {
+saveRuleBtn.addEventListener("click", async () => {
   const newDomain = domainInput.value.trim();
   const newTitle = titleInput.value.trim();
-  if (!newDomain || !newTitle) return;
 
-  chrome.storage.sync.get({ domainGroups: {} }, (result) => {
-    const domainGroups = result.domainGroups;
+  const error = validateRule(newDomain, newTitle, isRegexCheckbox.checked);
+  if (error) {
+    setStatus(statusEl, error);
+    return;
+  }
 
-    // Create new rule entry
-    domainGroups[newDomain] = {
-      title: newTitle,
-      color: colorSelect.value,
-      enabled: true,
-      isRegex: isRegexCheckbox.checked,
-    };
+  let domainGroups;
+  try {
+    ({ domainGroups } = await getSettings({ domainGroups: {} }));
+  } catch (err) {
+    setStatus(statusEl, `Could not load rules: ${err.message}`);
+    return;
+  }
 
-    chrome.storage.sync.set({ domainGroups }, () => {
-      renderDomains(domainGroups);
-      resetAddForm();
-    });
-  });
+  if (domainGroups[newDomain]) {
+    setStatus(
+      statusEl,
+      `A rule for "${newDomain}" already exists. Edit it below.`
+    );
+    return;
+  }
+
+  domainGroups[newDomain] = {
+    title: newTitle,
+    color: colorSelect.value,
+    enabled: true,
+    isRegex: isRegexCheckbox.checked,
+  };
+
+  if (await persist(domainGroups)) resetAddForm();
 });
 
-// Dropdown selection logic
 existingGroupsDropdown.addEventListener("change", (event) => {
-  const selectedTitle = event.target.value;
-  if (selectedTitle) {
-    titleInput.value = selectedTitle;
+  if (event.target.value) titleInput.value = event.target.value;
+});
+
+debugModeCheckbox.addEventListener("change", async (event) => {
+  try {
+    await setSettings({ debugModeEnabled: event.target.checked });
+  } catch (err) {
+    setStatus(statusEl, describeSaveError(err));
   }
 });
 
-// Debug Mode Checkbox Logic
-debugModeCheckbox.addEventListener("change", (event) => {
-  chrome.storage.sync.set({ debugModeEnabled: event.target.checked });
+// --- Import / Export ---
+// Also the escape hatch for the 8KB chrome.storage.sync per-item ceiling.
+
+exportBtn.addEventListener("click", async () => {
+  try {
+    const { domainGroups } = await getSettings({ domainGroups: {} });
+    const blob = new Blob([JSON.stringify(domainGroups, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "auto-tab-grouper-rules.json";
+    link.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    setStatus(statusEl, `Could not export: ${err.message}`);
+  }
+});
+
+importBtn.addEventListener("click", () => importFileInput.click());
+
+/**
+ * Accepts only the rule shape this extension writes, so a hand-edited or
+ * unrelated JSON file cannot poison storage.
+ * @param {unknown} parsed
+ * @returns {object} the sanitized rule map
+ */
+function sanitizeImportedRules(parsed) {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Expected a JSON object of rules.");
+  }
+  const clean = {};
+  for (const [key, value] of Object.entries(parsed)) {
+    if (!key || !value || typeof value !== "object") continue;
+    if (typeof value.title !== "string" || !value.title) continue;
+    const isRegex = value.isRegex === true;
+    if (validateRule(key, value.title, isRegex)) continue;
+    clean[key] = {
+      title: value.title,
+      color: GROUP_COLORS.includes(value.color) ? value.color : "grey",
+      enabled: value.enabled !== false,
+      isRegex,
+    };
+  }
+  if (Object.keys(clean).length === 0) {
+    throw new Error("No valid rules found in that file.");
+  }
+  return clean;
+}
+
+importFileInput.addEventListener("change", async (event) => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+
+  try {
+    const imported = sanitizeImportedRules(JSON.parse(await file.text()));
+    const { domainGroups } = await getSettings({ domainGroups: {} });
+    const merged = { ...domainGroups, ...imported };
+    if (await persist(merged)) {
+      setStatus(
+        statusEl,
+        `Imported ${Object.keys(imported).length} rules.`,
+        "info"
+      );
+    }
+  } catch (err) {
+    setStatus(statusEl, `Could not import: ${err.message}`);
+  } finally {
+    // Allow re-importing the same file.
+    event.target.value = "";
+  }
 });
 
 // --- Initialization ---
-
-// Function to initialize all settings from storage
-function loadSettings() {
-  chrome.storage.sync.get(
-    { domainGroups: {}, debugModeEnabled: false },
-    (result) => {
-      renderDomains(result.domainGroups);
-      debugModeCheckbox.checked = result.debugModeEnabled;
-    }
-  );
+async function loadSettings() {
+  try {
+    const result = await getSettings({
+      domainGroups: {},
+      debugModeEnabled: false,
+    });
+    await renderDomains(result.domainGroups);
+    debugModeCheckbox.checked = result.debugModeEnabled;
+  } catch (err) {
+    setStatus(statusEl, `Could not load settings: ${err.message}`);
+  }
 }
 
-// Initial load
 loadSettings();

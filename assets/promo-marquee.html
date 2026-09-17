@@ -1,0 +1,83 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      /* Marquee promotional tile, 1400x560. Text-free, same palette as the
+         small tile so the two read as one set. */
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        overflow: hidden;
+      }
+      .tile {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 110px;
+        background: linear-gradient(
+          115deg,
+          #0a1b3d 0%,
+          #12306b 55%,
+          #0d2547 100%
+        );
+        position: relative;
+        overflow: hidden;
+      }
+      .tile::after {
+        content: "";
+        position: absolute;
+        inset: auto -12% -60% auto;
+        width: 52%;
+        height: 160%;
+        background: radial-gradient(
+          ellipse at 70% 70%,
+          rgba(238, 119, 17, 0.4),
+          transparent 60%
+        );
+      }
+      img {
+        position: relative;
+        width: 310px;
+        height: 310px;
+        display: block;
+      }
+      .cards {
+        position: relative;
+        display: flex;
+        gap: 24px;
+      }
+      /* Echo the mark's three colours rather than neutral boxes, so the
+         right-hand side reads as grouped tabs instead of empty placeholders. */
+      .card {
+        width: 132px;
+        height: 176px;
+        border-radius: 18px;
+        background: rgba(26, 115, 232, 0.9);
+        border: 3px solid rgba(90, 165, 255, 0.75);
+      }
+      .card.b {
+        background: rgba(18, 139, 63, 0.9);
+        border-color: rgba(70, 200, 120, 0.75);
+      }
+      .card.c {
+        background: rgba(238, 119, 17, 0.92);
+        border-color: rgba(255, 170, 90, 0.8);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="tile">
+      <img src="/assets/icon.svg" />
+      <div class="cards">
+        <div class="card"></div>
+        <div class="card b"></div>
+        <div class="card c"></div>
+      </div>
+    </div>
+  </body>
+</html>

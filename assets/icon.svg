@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96">
+  <!-- Three cascading tab-group cards. Saturated flat fills, no white and no
+       drop shadows, so the mark reads on both light and dark backgrounds.
+       Each card behind is masked by the next card grown by 3px, carving a
+       transparent gutter so the shapes stay separable down to 16px.
+       The cascade is tuned to a square 92x92 bounding box so the artwork
+       fills the store's 96x96 art area in both dimensions. -->
+  <defs>
+    <mask id="cutGreen">
+      <rect width="96" height="96" fill="#fff"/>
+      <rect x="20" y="27" width="26" height="15" rx="6.5" fill="#000"/>
+      <rect x="20" y="33" width="56" height="36" rx="9"   fill="#000"/>
+    </mask>
+    <mask id="cutOrange">
+      <rect width="96" height="96" fill="#fff"/>
+      <rect x="41" y="55" width="26" height="15" rx="6.5" fill="#000"/>
+      <rect x="41" y="61" width="56" height="36" rx="9"   fill="#000"/>
+    </mask>
+  </defs>
+
+  <!-- back card: blue -->
+  <g mask="url(#cutGreen)">
+    <rect x="2"  y="2"  width="20" height="9"  rx="3.5" fill="#1a73e8"/>
+    <rect x="2"  y="8"  width="50" height="30" rx="6"   fill="#1a73e8"/>
+  </g>
+
+  <!-- middle card: green -->
+  <g mask="url(#cutOrange)">
+    <rect x="23" y="30" width="20" height="9"  rx="3.5" fill="#128b3f"/>
+    <rect x="23" y="36" width="50" height="30" rx="6"   fill="#128b3f"/>
+  </g>
+
+  <!-- front card: orange -->
+  <g>
+    <rect x="44" y="58" width="20" height="9"  rx="3.5" fill="#ee7711"/>
+    <rect x="44" y="64" width="50" height="30" rx="6"   fill="#ee7711"/>
+  </g>
+</svg>

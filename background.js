@@ -1,3 +1,9 @@
+// background.js
+
+import { compileRules, matchCompiledRules } from "./rules.js";
+import { planGroupMerges, partitionMovableTabs } from "./groups.js";
+import { getSettings } from "./storage.js";
+
 // --- Custom Logger ---
 let debugMode = false;
 const logger = {
@@ -9,27 +15,65 @@ const logger = {
   },
   error: (...args) => console.error("[Auto Tab Grouper]", ...args),
 };
-// ... (logger setup code remains the same) ...
+
 async function updateDebugState() {
-  const result = await chrome.storage.sync.get({ debugModeEnabled: false });
-  debugMode = result.debugModeEnabled;
-  logger.log("Debug mode is now:", debugMode ? "ENABLED" : "DISABLED");
+  try {
+    const result = await getSettings({ debugModeEnabled: false });
+    debugMode = result.debugModeEnabled;
+    logger.log("Debug mode is now:", debugMode ? "ENABLED" : "DISABLED");
+  } catch (err) {
+    logger.error("[updateDebugState] Could not read settings:", err);
+  }
 }
 updateDebugState();
+
+// --- Rule cache ---
+// The rule set changes rarely but is consulted once per tab, so it is compiled
+// (including user regexes) once and invalidated from the storage listener.
+let compiledRules = null;
+
+async function getCompiledRules() {
+  if (compiledRules) return compiledRules;
+  let domainGroups = {};
+  try {
+    ({ domainGroups } = await getSettings({ domainGroups: {} }));
+  } catch (err) {
+    logger.error("[getCompiledRules] Could not read rules:", err);
+    return [];
+  }
+  const { rules, invalid } = compileRules(domainGroups);
+  for (const { key, error } of invalid) {
+    logger.warn(`[getCompiledRules] Skipping invalid regex '${key}':`, error);
+  }
+  compiledRules = rules;
+  return compiledRules;
+}
+
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.debugModeEnabled) {
     debugMode = changes.debugModeEnabled.newValue;
     logger.log("Debug mode updated to:", debugMode ? "ENABLED" : "DISABLED");
   }
+  if (changes.domainGroups) {
+    compiledRules = null;
+    logger.log("Rule cache invalidated.");
+  }
 });
 
-// --- Queuing system (remains the same) ---
-let tabQueue = [];
+// --- Queue ---
+// Tab ids are tracked in a Set because the same tab can be offered by several
+// listeners (an update, a window sweep and a manual "Group All") at once.
+const tabQueue = [];
+const queuedTabIds = new Set();
 let isProcessingQueue = false;
-async function processQueue() {
-  /* ... */
+
+function enqueueTab(tabInfo) {
+  if (queuedTabIds.has(tabInfo.tabId)) return false;
+  queuedTabIds.add(tabInfo.tabId);
+  tabQueue.push(tabInfo);
+  return true;
 }
-// ... (queuing, getDomain, getConfig, handleTab functions remain the same) ...
+
 async function processQueue() {
   if (isProcessingQueue || tabQueue.length === 0) return;
   isProcessingQueue = true;
@@ -44,38 +88,52 @@ async function processQueue() {
         `[processQueue] Error processing tab ${tabInfo.tabId}:`,
         error
       );
+    } finally {
+      queuedTabIds.delete(tabInfo.tabId);
     }
   }
   isProcessingQueue = false;
   logger.log("[processQueue] Finished processing queue.");
 }
-function getDomain(url) {
-  try {
-    const hostname = new URL(url).hostname;
-    return hostname;
-  } catch (err) {
-    logger.warn(`[getDomain] Invalid URL: ${url}`, err);
-    return null;
+
+// --- Grouping ---
+const MAX_RETRIES = 4;
+
+// Chrome rejects tab edits while a drag or a window teardown is in flight, and
+// only reports it through the message text.
+function isTabsLockedError(err) {
+  return Boolean(err?.message?.includes("Tabs cannot be edited right now"));
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function retryOrLog(err, tabInfo, retryCount, label) {
+  if (isTabsLockedError(err) && retryCount < MAX_RETRIES) {
+    const wait = 250 * 2 ** retryCount;
+    logger.warn(`[handleTab] Tab is locked. Retrying in ${wait}ms...`);
+    await delay(wait);
+    return handleTab(tabInfo, retryCount + 1);
   }
+  logger.error(`[handleTab] ${label}:`, err);
+  return undefined;
 }
-async function getConfig() {
-  return new Promise((resolve) => {
-    chrome.storage.sync.get({ domainGroups: {} }, (result) => {
-      resolve(result.domainGroups);
-    });
-  });
-}
-async function handleTab({ tabId, url, windowId }, retryCount = 0) {
+
+async function handleTab(tabInfo, retryCount = 0) {
+  const { tabId } = tabInfo;
   logger.log(
     `[handleTab] Checking Tab ID: ${tabId}, Attempt: ${retryCount + 1}`
   );
+
   let tab;
   try {
     tab = await chrome.tabs.get(tabId);
-  } catch (err) {
+  } catch {
     logger.log(`[handleTab] Tab not found: ${tabId}, likely closed.`);
     return;
   }
+
   if (tab.pinned) {
     logger.log(`[handleTab] Tab ${tabId} is pinned. Skipping.`);
     return;
@@ -84,32 +142,15 @@ async function handleTab({ tabId, url, windowId }, retryCount = 0) {
     logger.log(`[handleTab] Tab ${tabId} is already in a group. Skipping.`);
     return;
   }
-  const domain = getDomain(tab.url);
-  if (!domain) return;
-  const domainGroups = await getConfig();
-  let groupInfo = null;
-  for (const [key, info] of Object.entries(domainGroups)) {
-    if (info.isRegex) {
-      try {
-        const regex = new RegExp(key);
-        if (regex.test(tab.url)) {
-          groupInfo = info;
-          break;
-        }
-      } catch (e) {
-        logger.warn(`[handleTab] Invalid regex '${key}':`, e);
-      }
-    } else {
-      const ruleDomain = key.startsWith("*.") ? key.slice(2) : key;
-      if (domain === ruleDomain || domain.endsWith(`.${ruleDomain}`)) {
-        groupInfo = info;
-        break;
-      }
-    }
-  }
-  if (!groupInfo || groupInfo.enabled === false) return;
-  logger.log(`[handleTab] Matched rule for ${tab.url}:`, groupInfo);
-  const targetWindowId = windowId || tab.windowId;
+
+  const rules = await getCompiledRules();
+  const match = matchCompiledRules(tab.url, rules);
+  if (!match) return;
+
+  const groupInfo = match.info;
+  logger.log(`[handleTab] Matched rule '${match.key}' for ${tab.url}`);
+
+  const targetWindowId = tabInfo.windowId || tab.windowId;
   let groups;
   try {
     groups = await chrome.tabGroups.query({ windowId: targetWindowId });
@@ -120,7 +161,9 @@ async function handleTab({ tabId, url, windowId }, retryCount = 0) {
     );
     return;
   }
-  let targetGroup = groups.find((g) => g.title === groupInfo.title);
+
+  const targetGroup = groups.find((g) => g.title === groupInfo.title);
+
   if (!targetGroup) {
     logger.log(
       `[handleTab] Creating new group in window ${targetWindowId}: ${groupInfo.title}`
@@ -133,21 +176,7 @@ async function handleTab({ tabId, url, windowId }, retryCount = 0) {
       });
       logger.log(`[handleTab] Group created with ID: ${newGroupId}`);
     } catch (err) {
-      if (
-        err.message.includes("Tabs cannot be edited right now") &&
-        retryCount < 4
-      ) {
-        const delay = 250 * Math.pow(2, retryCount);
-        logger.warn(`[handleTab] Tab is locked. Retrying in ${delay}ms...`);
-        return new Promise((resolve) =>
-          setTimeout(
-            () => resolve(handleTab({ tabId, url, windowId }, retryCount + 1)),
-            delay
-          )
-        );
-      } else {
-        logger.error("[handleTab] Failed to create new group:", err);
-      }
+      return retryOrLog(err, tabInfo, retryCount, "Failed to create new group");
     }
   } else {
     logger.log(
@@ -156,81 +185,148 @@ async function handleTab({ tabId, url, windowId }, retryCount = 0) {
     try {
       await chrome.tabs.group({ groupId: targetGroup.id, tabIds: tab.id });
     } catch (err) {
-      if (
-        err.message.includes("Tabs cannot be edited right now") &&
-        retryCount < 4
-      ) {
-        const delay = 250 * Math.pow(2, retryCount);
-        logger.warn(`[handleTab] Tab is locked. Retrying in ${delay}ms...`);
-        return new Promise((resolve) =>
-          setTimeout(
-            () => resolve(handleTab({ tabId, url, windowId }, retryCount + 1)),
-            delay
-          )
-        );
-      } else {
-        logger.error(`[handleTab] Failed to add tab to group:`, err);
-      }
+      return retryOrLog(err, tabInfo, retryCount, "Failed to add tab to group");
     }
   }
 }
 
-// --- New Function to Merge Duplicate Groups ---
-async function mergeDuplicateGroups() {
-  logger.log("[mergeGroups] Starting group merge operation...");
-  const allGroups = await chrome.tabGroups.query({});
-  const currentWindow = await chrome.windows.getCurrent({});
+// --- Merge duplicate groups ---
 
-  // 1. Organize all existing groups by their title
-  const groupsByTitle = new Map();
-  for (const group of allGroups) {
-    if (!group.title) continue; // Skip unnamed groups
-    if (!groupsByTitle.has(group.title)) {
-      groupsByTitle.set(group.title, []);
-    }
-    groupsByTitle.get(group.title).push(group);
+// Our own merging moves tabs between groups and windows, which fires the very
+// listeners that trigger merging. This flag keeps that from feeding back.
+let isMerging = false;
+
+/**
+ * Folds duplicate tab groups into one.
+ *
+ * @param {{scope?: "window"|"all", windowId?: number|null}} [options]
+ *   scope "window" only merges groups that already share a window (safe enough
+ *   to run automatically); "all" also pulls tabs across windows.
+ * @returns {Promise<{mergedGroups: number}>}
+ */
+async function mergeDuplicateGroups(options = {}) {
+  const { scope = "all", windowId = null } = options;
+  if (isMerging) {
+    logger.log("[mergeGroups] Already merging; skipping re-entrant run.");
+    return { mergedGroups: 0 };
   }
+  isMerging = true;
 
-  // 2. Iterate through the organized groups and find duplicates
-  for (const [title, groups] of groupsByTitle.entries()) {
-    if (groups.length <= 1) continue; // Not a duplicate
+  try {
+    logger.log(`[mergeGroups] Starting merge, scope=${scope}.`);
+    const query = windowId === null ? {} : { windowId };
+    const allGroups = await chrome.tabGroups.query(query);
 
-    logger.log(
-      `[mergeGroups] Found ${groups.length} groups with title "${title}".`
-    );
-
-    // 3. Designate a target group (prioritize the one in the current window)
-    let targetGroup = groups.find((g) => g.windowId === currentWindow.id);
-    if (!targetGroup) {
-      targetGroup = groups[0]; // Default to the first one found
+    // A service worker has no "current" window; the last focused one is the
+    // closest stand-in for where the user is looking.
+    let focusedWindowId = windowId;
+    if (focusedWindowId === null) {
+      try {
+        const focused = await chrome.windows.getLastFocused();
+        focusedWindowId = focused?.id ?? null;
+      } catch (err) {
+        logger.warn("[mergeGroups] Could not determine focused window:", err);
+      }
     }
-    logger.log(
-      `[mergeGroups] Target group is ${targetGroup.id} in window ${targetGroup.windowId}.`
-    );
 
-    const sourceGroups = groups.filter((g) => g.id !== targetGroup.id);
+    const plans = planGroupMerges(allGroups, { scope, focusedWindowId });
+    let mergedGroups = 0;
 
-    // 4. Get all tabs from all source groups
-    const tabQueries = sourceGroups.map((g) =>
-      chrome.tabs.query({ groupId: g.id })
-    );
-    const nestedTabs = await Promise.all(tabQueries);
-    const tabsToMove = nestedTabs.flat();
-    const tabIdsToMove = tabsToMove.map((t) => t.id);
+    for (const plan of plans) {
+      logger.log(
+        `[mergeGroups] Folding ${plan.sourceGroupIds.length} group(s) titled ` +
+          `"${plan.title}" into ${plan.targetGroupId} (window ${plan.targetWindowId}).`
+      );
 
-    if (tabIdsToMove.length === 0) continue;
+      const nestedTabs = await Promise.all(
+        plan.sourceGroupIds.map((id) => chrome.tabs.query({ groupId: id }))
+      );
+      const { movable, skipped } = partitionMovableTabs(nestedTabs.flat());
+      if (skipped.length > 0) {
+        logger.log(`[mergeGroups] Leaving ${skipped.length} pinned tab(s).`);
+      }
+      if (movable.length === 0) continue;
 
-    // 5. Move tabs to the target window and add them to the target group
-    logger.log(
-      `[mergeGroups] Moving ${tabIdsToMove.length} tabs to group ${targetGroup.id}.`
-    );
-    await chrome.tabs.move(tabIdsToMove, {
-      windowId: targetGroup.windowId,
-      index: -1,
+      try {
+        if (!plan.sameWindow) {
+          // Chrome will not carry a tab's group across a window boundary, and
+          // moving a still-grouped tab between windows is where the old code
+          // silently gave up. Ungroup first, then move, then regroup.
+          await chrome.tabs.ungroup(movable);
+          await chrome.tabs.move(movable, {
+            windowId: plan.targetWindowId,
+            index: -1,
+          });
+        }
+        await chrome.tabs.group({
+          groupId: plan.targetGroupId,
+          tabIds: movable,
+        });
+        mergedGroups += plan.sourceGroupIds.length;
+      } catch (err) {
+        // One unmovable group (a tab mid-drag, a window closing) must not abort
+        // the whole merge, and must never leave the caller without a response.
+        logger.error(
+          `[mergeGroups] Failed to merge groups titled "${plan.title}":`,
+          err
+        );
+      }
+    }
+
+    logger.log(`[mergeGroups] Complete, merged ${mergedGroups} group(s).`);
+    return { mergedGroups };
+  } finally {
+    isMerging = false;
+  }
+}
+
+// Chrome hands tabs over one at a time when windows are combined, so collapse
+// the burst into a single merge pass per window.
+const pendingMergeWindows = new Set();
+let mergeSweepTimer = null;
+
+function scheduleWindowMerge(windowId) {
+  if (isMerging || !Number.isInteger(windowId)) return;
+  pendingMergeWindows.add(windowId);
+  clearTimeout(mergeSweepTimer);
+  mergeSweepTimer = setTimeout(async () => {
+    const windows = [...pendingMergeWindows];
+    pendingMergeWindows.clear();
+    for (const id of windows) {
+      try {
+        await mergeDuplicateGroups({ scope: "window", windowId: id });
+      } catch (err) {
+        logger.error(`[mergeGroups] Auto-merge failed for window ${id}:`, err);
+      }
+    }
+  }, 400);
+}
+
+// --- Sweeps ---
+async function sweepUngroupedTabs(query) {
+  let tabs;
+  try {
+    tabs = await chrome.tabs.query({
+      ...query,
+      groupId: chrome.tabGroups.TAB_GROUP_ID_NONE,
     });
-    await chrome.tabs.group({ groupId: targetGroup.id, tabIds: tabIdsToMove });
+  } catch (err) {
+    logger.error("[sweep] Failed to query tabs:", err);
+    return 0;
   }
-  logger.log("[mergeGroups] Merge operation complete.");
+
+  let queued = 0;
+  for (const tab of tabs) {
+    if (!tab.url || !tab.url.startsWith("http")) continue;
+    if (enqueueTab({ tabId: tab.id, url: tab.url, windowId: tab.windowId })) {
+      queued += 1;
+    }
+  }
+  if (queued > 0) {
+    logger.log(`[sweep] Queued ${queued} ungrouped tabs.`);
+    processQueue();
+  }
+  return tabs.length;
 }
 
 // --- Event Listeners ---
@@ -240,91 +336,82 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     tab.url &&
     tab.groupId === chrome.tabGroups.TAB_GROUP_ID_NONE
   ) {
-    tabQueue.push({ tabId, url: tab.url, windowId: tab.windowId });
-    processQueue();
+    if (enqueueTab({ tabId, url: tab.url, windowId: tab.windowId })) {
+      processQueue();
+    }
   }
 });
 
-chrome.tabs.onCreated.addListener((tab) => {
-  if (tab.url && tab.url !== "about:blank" && !tab.pendingUrl) {
-    tabQueue.push({ tabId: tab.id, url: tab.url, windowId: tab.windowId });
-    processQueue();
-  }
+// Dragging a window into another, or dragging one tab across, hands each tab
+// to the destination window separately. Chrome recreates the groups there, so
+// the window ends up with two groups of the same name -- the case that used to
+// need a manual "Merge Groups" click.
+chrome.tabs.onAttached.addListener((tabId, { newWindowId }) => {
+  logger.log(`[onAttached] Tab ${tabId} arrived in window ${newWindowId}.`);
+  scheduleWindowMerge(newWindowId);
 });
 
+// A group dragged between windows arrives as a new group rather than attached
+// tabs, so watch group creation and movement too.
+chrome.tabGroups?.onCreated?.addListener((group) => {
+  logger.log(`[onGroupCreated] Group ${group.id} in window ${group.windowId}.`);
+  scheduleWindowMerge(group.windowId);
+});
+
+chrome.tabGroups?.onMoved?.addListener((group) => {
+  logger.log(`[onGroupMoved] Group ${group.id} in window ${group.windowId}.`);
+  scheduleWindowMerge(group.windowId);
+});
+
+// Renaming a group can create a duplicate of one already in the window.
+chrome.tabGroups?.onUpdated?.addListener((group) => {
+  logger.log(`[onGroupUpdated] Group ${group.id} in window ${group.windowId}.`);
+  scheduleWindowMerge(group.windowId);
+});
+
+// Rapid window switching used to trigger one full sweep per focus change.
+let focusSweepTimer = null;
 chrome.windows.onFocusChanged.addListener((windowId) => {
   if (windowId === chrome.windows.WINDOW_ID_NONE) return;
-  logger.log(
-    `[onFocusChanged] Window focused: ${windowId}. Checking for ungrouped tabs.`
-  );
-  setTimeout(() => {
-    chrome.tabs.query(
-      { windowId: windowId, groupId: chrome.tabGroups.TAB_GROUP_ID_NONE },
-      (tabs) => {
-        if (tabs && tabs.length > 0) {
-          logger.log(
-            `[onFocusChanged] Found ${tabs.length} ungrouped tabs to check.`
-          );
-          for (const tab of tabs) {
-            if (tab.url && tab.url.startsWith("http")) {
-              tabQueue.push({
-                tabId: tab.id,
-                url: tab.url,
-                windowId: tab.windowId,
-              });
-            }
-          }
-          processQueue();
-        }
-      }
-    );
-  }, 250);
+  logger.log(`[onFocusChanged] Window focused: ${windowId}.`);
+  clearTimeout(focusSweepTimer);
+  focusSweepTimer = setTimeout(() => {
+    sweepUngroupedTabs({ windowId });
+  }, 400);
 });
 
-// Updated: Message listener now handles both actions
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === "consolidateTabs") {
+// --- Messages ---
+const messageHandlers = {
+  async consolidateTabs() {
     logger.log("[onMessage] Received request to consolidate tabs.");
-    chrome.tabs.query(
-      { groupId: chrome.tabGroups.TAB_GROUP_ID_NONE },
-      (tabs) => {
-        if (tabs && tabs.length > 0) {
-          logger.log(
-            `[onMessage] Found ${tabs.length} ungrouped tabs to check.`
-          );
-          for (const tab of tabs) {
-            if (tab.url && tab.url.startsWith("http")) {
-              tabQueue.push({
-                tabId: tab.id,
-                url: tab.url,
-                windowId: tab.windowId,
-              });
-            }
-          }
-          processQueue();
-        }
-        sendResponse({ status: "complete", tabsFound: tabs ? tabs.length : 0 });
-      }
-    );
-    return true;
-  }
+    const tabsFound = await sweepUngroupedTabs({});
+    return { status: "complete", tabsFound };
+  },
 
-  if (message.action === "mergeGroups") {
+  async mergeGroups() {
     logger.log("[onMessage] Received request to merge groups.");
-    mergeDuplicateGroups().then(() => {
-      sendResponse({ status: "complete" });
-    });
-    return true;
-  }
+    const { mergedGroups } = await mergeDuplicateGroups();
+    return { status: "complete", mergedGroups };
+  },
 
-  if (message.action === "processSpecificTab" && message.tabInfo) {
+  async processSpecificTab(message) {
+    if (!message.tabInfo) return { status: "error", message: "No tab info." };
     logger.log(
       `[onMessage] Received request to process specific tab: ${message.tabInfo.tabId}`
     );
-    // Add the single tab to the processing queue and start processing.
-    tabQueue.push(message.tabInfo);
-    processQueue();
-    sendResponse({ status: "queued" }); // Acknowledge receipt
-    return true; // Indicate async response
-  }
+    if (enqueueTab(message.tabInfo)) processQueue();
+    return { status: "queued" };
+  },
+};
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  const handler = messageHandlers[message?.action];
+  if (!handler) return false;
+
+  // Every path must answer: the popup disables its buttons until it hears back.
+  handler(message).then(sendResponse, (err) => {
+    logger.error(`[onMessage] '${message.action}' failed:`, err);
+    sendResponse({ status: "error", message: err?.message ?? String(err) });
+  });
+  return true; // async response
 });
