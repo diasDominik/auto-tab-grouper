@@ -100,6 +100,34 @@ Screenshots are rendered from the real `popup.html` and `options.html` running
 the real scripts against a stubbed `chrome.*` backend, so they stay honest. See
 [store-assets/README.md](store-assets/README.md).
 
+## Releasing
+
+The **Package** workflow builds the ZIP you upload to the Chrome Web Store. It
+never publishes anything itself — it produces an artifact for manual upload.
+
+Run it either way:
+
+- **Actions → Package → Run workflow** for an ad-hoc build from any branch.
+- **Push a `v*` tag** (e.g. `v1.4.0`) to build from that tag and attach the ZIP
+  to a **draft** GitHub Release. A tag whose version disagrees with
+  `manifest.json` fails the build rather than shipping the wrong version.
+
+Either run uploads two artifacts: the extension ZIP, and the store listing
+images from `store-assets/` for filling in the listing itself.
+
+To cut a release: bump the version in **both** `manifest.json` and
+`package.json`, commit, tag, push the tag, then download the artifact and
+upload it at the [developer dashboard](https://chrome.google.com/webstore/devconsole).
+
+Build the same ZIP locally with `npm run package`; it lands in `dist/`.
+
+The file list is derived, not hardcoded — `tools/build-package.mjs` starts at
+the manifest's entry points, follows the `<script>` and `<link>` tags in the
+HTML, and walks the ES module import graph. A new module is picked up
+automatically, and tests, tooling and store artwork cannot drift into the
+upload. The build fails if a referenced file is missing or a development file
+would be included.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
